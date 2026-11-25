@@ -18,7 +18,6 @@ const DRAW_POINTS = 256;
 let customWaveL = new Array(DRAW_POINTS).fill(0);
 let customWaveR = new Array(DRAW_POINTS).fill(0);
 let periodicWaveL = null, periodicWaveR = null;
-let cyclesL = 1, cyclesR = 1;
 let smoothL = 0, smoothR = 0;
 let normalizeL = false, normalizeR = false;
 
@@ -168,7 +167,6 @@ function channelMarkup(ch, title) {
       <canvas id="previewCanvas${ch}" class="wavePreviewCanvas" width="512" height="200" aria-label="Corrected waveform preview"></canvas>
       <button type="button" id="clearDraw${ch}" class="clearDrawButton">Clear waveform</button>
       <div class="waveOptions"><strong>Options / Waveform correction</strong>
-        <div class="waveOption"><label for="cycles${ch}">Wave cycles / repeat count</label><input id="cycles${ch}" type="range" min="1" max="8" value="1" step="1"><div id="cyclesDisplay${ch}" class="waveOptionValue">1 cycle</div></div>
         <div class="waveOption"><label for="smooth${ch}">Smooth correction</label><input id="smooth${ch}" type="range" min="0" max="100" value="0" step="5"><div id="smoothDisplay${ch}" class="waveOptionValue">0 % (off)</div></div>
         <label class="checkRow"><input id="normalize${ch}" type="checkbox"> Normalize amplitude (scale to full range)</label>
       </div></div>
@@ -207,10 +205,9 @@ function renderSelectedWavePreview(ch) {
   let samples;
   if (type === "custom") {
     const data = ch === "L" ? customWaveL : customWaveR;
-    const cycles = ch === "L" ? cyclesL : cyclesR;
     const smoothing = ch === "L" ? smoothL : smoothR;
     const normalize = ch === "L" ? normalizeL : normalizeR;
-    samples = processCustomWave(data, cycles, smoothing, normalize);
+    samples = processCustomWave(data, smoothing, normalize);
   } else {
     const N = DRAW_POINTS;
     samples = Array.from({length:N}, (_,i) => {
@@ -241,10 +238,9 @@ function drawWaveOnCanvas(canvas, samples, lineColor) {
 function renderWavePreview(ch, data) {
   const canvas = document.getElementById("previewCanvas" + ch);
   if (!canvas) return;
-  const cycles = ch === "L" ? cyclesL : cyclesR;
   const smoothing = ch === "L" ? smoothL : smoothR;
   const normalize = ch === "L" ? normalizeL : normalizeR;
-  const processed = processCustomWave(data, cycles, smoothing, normalize);
+  const processed = processCustomWave(data, smoothing, normalize);
   drawWaveOnCanvas(canvas, processed, "#e49a27");
 }
 
@@ -298,18 +294,9 @@ function setupCustomWaveDrawing(ch, data) {
 }
 
 function setupWaveOptions(ch) {
-  const cycle = document.getElementById("cycles" + ch);
   const smooth = document.getElementById("smooth" + ch);
   const norm = document.getElementById("normalize" + ch);
-  const cycleDisplay = document.getElementById("cyclesDisplay" + ch);
   const smoothDisplay = document.getElementById("smoothDisplay" + ch);
-  cycle.addEventListener("input", () => {
-    if (ch === "L") cyclesL = Number(cycle.value); else cyclesR = Number(cycle.value);
-    cycleDisplay.textContent = cycle.value + (Number(cycle.value) === 1 ? " cycle" : " cycles");
-    renderWavePreview(ch, ch === "L" ? customWaveL : customWaveR);
-    renderSelectedWavePreview(ch);
-    updateWaveform();
-  });
   smooth.addEventListener("input", () => {
     if (ch === "L") smoothL = Number(smooth.value); else smoothR = Number(smooth.value);
     smoothDisplay.textContent = smooth.value + " %" + (Number(smooth.value) === 0 ? " (off)" : "");
@@ -325,17 +312,10 @@ function setupWaveOptions(ch) {
   });
 }
 
-// Apply repeat, smoothing and optional amplitude normalization to the hand-drawn samples.
-function processCustomWave(data, cycles, smoothing, normalize) {
+// Apply smoothing and optional amplitude normalization to the hand-drawn samples.
+function processCustomWave(data, smoothing, normalize) {
   const N = data.length;
-  const repeated = new Array(N);
-  for (let i = 0; i < N; i++) {
-    const phase = (i / N * cycles) % 1;
-    const pos = phase * N;
-    const a = Math.floor(pos) % N, b = (a + 1) % N;
-    const t = pos - Math.floor(pos);
-    repeated[i] = data[a] * (1 - t) + data[b] * t;
-  }
+  let repeated = data.slice();
   // Smooth with a short circular moving-average filter; strength controls passes.
   const passes = Math.round(smoothing / 12.5);
   let result = repeated;
@@ -354,9 +334,9 @@ function processCustomWave(data, cycles, smoothing, normalize) {
 }
 
 // Fourier series approximation of the processed drawn samples, used by PeriodicWave.
-function createCustomPeriodicWave(data, cycles, smoothing, normalize) {
+function createCustomPeriodicWave(data, smoothing, normalize) {
   if (!audioCtx) return null;
-  const processed = processCustomWave(data, cycles, smoothing, normalize);
+  const processed = processCustomWave(data, smoothing, normalize);
   const N = processed.length;
   const harmonics = Math.min(64, Math.floor(N/2)-1);
   const real = new Float32Array(harmonics+1);
@@ -381,10 +361,9 @@ function applyWave(ch) {
   const sel = ch === "L" ? waveL : waveR;
   const data = ch === "L" ? customWaveL : customWaveR;
   if (sel.value === "custom") {
-    const cycles = ch === "L" ? cyclesL : cyclesR;
     const smoothing = ch === "L" ? smoothL : smoothR;
     const normalize = ch === "L" ? normalizeL : normalizeR;
-    const p = createCustomPeriodicWave(data, cycles, smoothing, normalize);
+    const p = createCustomPeriodicWave(data, smoothing, normalize);
     if (p) { if (ch === "L") periodicWaveL=p; else periodicWaveR=p; osc.setPeriodicWave(p); }
   } else osc.type = sel.value;
 }
