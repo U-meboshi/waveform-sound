@@ -1,5 +1,5 @@
 // ============================================================
-// Dual Channel Signal Generator + Custom Drawn Waveforms
+// Dual Channel Signal Generator · All Waveform Previews + Custom Drawn Waveforms
 // p5.js canvas is used only as the background. Audio uses Web Audio API.
 // LEFT / RIGHT are independently controllable.
 // ============================================================
@@ -114,7 +114,7 @@ function createAppContainer() {
 function buildUI() {
   const app = document.getElementById("signalGeneratorApp");
   app.innerHTML = `
-    <div class="title">Dual Channel Signal Generator</div>
+    <div class="title">Dual Channel Signal Generator · All Waveform Previews</div>
     <div class="subtitle">Independent Left / Right Audio Output · Custom waveform drawing</div>
     <div class="channels">
       ${channelMarkup("L", "LEFT")}
@@ -137,8 +137,8 @@ function buildUI() {
 
   freqSliderL.value = frequencyToSlider(440); freqSliderR.value = frequencyToSlider(440);
   bindFrequency("L"); bindFrequency("R");
-  waveL.addEventListener("change", () => { toggleCustomArea("L"); updateWaveform(); });
-  waveR.addEventListener("change", () => { toggleCustomArea("R"); updateWaveform(); });
+  waveL.addEventListener("change", () => { toggleCustomArea("L"); renderSelectedWavePreview("L"); updateWaveform(); });
+  waveR.addEventListener("change", () => { toggleCustomArea("R"); renderSelectedWavePreview("R"); updateWaveform(); });
   volumeL.addEventListener("input", () => { volumeDisplayL.textContent = volumeL.value + " %"; updateVolume(); });
   volumeR.addEventListener("input", () => { volumeDisplayR.textContent = volumeR.value + " %"; updateVolume(); });
   document.getElementById("bothButton").addEventListener("click", () => startAudio("both"));
@@ -148,6 +148,7 @@ function buildUI() {
   setupCustomWaveDrawing("L", customWaveL);
   setupCustomWaveDrawing("R", customWaveR);
   setupWaveOptions("L"); setupWaveOptions("R");
+  renderSelectedWavePreview("L"); renderSelectedWavePreview("R");
 }
 
 function channelMarkup(ch, title) {
@@ -158,6 +159,8 @@ function channelMarkup(ch, title) {
       <div id="freqDisplay${ch}" class="frequencyDisplay">440 Hz</div></div>
     <div class="control"><label for="wave${ch}">Waveform</label>
       <select id="wave${ch}"><option value="sine">Sine</option><option value="square">Square</option><option value="triangle">Triangle</option><option value="sawtooth">Sawtooth</option><option value="custom">Custom (Draw)</option></select></div>
+    <div class="previewLabel">Selected waveform preview (live)</div>
+    <canvas id="selectedPreview${ch}" class="wavePreviewCanvas" width="512" height="200" aria-label="Selected waveform preview"></canvas>
     <div id="customArea${ch}" class="customWaveArea"><label>Draw your waveform (left → right = one cycle)</label>
       <canvas id="drawCanvas${ch}" class="waveDrawCanvas" width="512" height="200"></canvas>
       <div class="drawHint">Center line = 0. Top = +1, bottom = −1. Draw with mouse or touch.</div>
@@ -195,24 +198,54 @@ function toggleCustomArea(ch) {
   document.getElementById("customArea" + ch).classList.toggle("active", select.value === "custom");
 }
 
+// Preview every selectable waveform type (standard + processed custom) without requiring playback.
+function renderSelectedWavePreview(ch) {
+  const canvas = document.getElementById("selectedPreview" + ch);
+  if (!canvas) return;
+  const selector = ch === "L" ? waveL : waveR;
+  const type = selector ? selector.value : "sine";
+  let samples;
+  if (type === "custom") {
+    const data = ch === "L" ? customWaveL : customWaveR;
+    const cycles = ch === "L" ? cyclesL : cyclesR;
+    const smoothing = ch === "L" ? smoothL : smoothR;
+    const normalize = ch === "L" ? normalizeL : normalizeR;
+    samples = processCustomWave(data, cycles, smoothing, normalize);
+  } else {
+    const N = DRAW_POINTS;
+    samples = Array.from({length:N}, (_,i) => {
+      const phase = i / N;
+      if (type === "sine") return Math.sin(2*Math.PI*phase);
+      if (type === "square") return phase < 0.5 ? 1 : -1;
+      if (type === "triangle") return 1 - 4*Math.abs(phase - 0.5);
+      if (type === "sawtooth") return 2*phase - 1;
+      return 0;
+    });
+  }
+  drawWaveOnCanvas(canvas, samples, type === "custom" ? "#e49a27" : "#1479d2");
+}
+
+function drawWaveOnCanvas(canvas, samples, lineColor) {
+  const ctx = canvas.getContext("2d"), w = canvas.width, h = canvas.height;
+  ctx.clearRect(0,0,w,h);
+  ctx.fillStyle="#f8fbff"; ctx.fillRect(0,0,w,h);
+  ctx.strokeStyle="#e3eaf1"; ctx.lineWidth=1;
+  for (let x=0;x<=w;x+=32) { ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,h);ctx.stroke(); }
+  for (let y=0;y<=h;y+=25) { ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke(); }
+  ctx.strokeStyle="#8a8a8a";ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(0,h/2);ctx.lineTo(w,h/2);ctx.stroke();
+  ctx.strokeStyle=lineColor;ctx.lineWidth=3;ctx.lineJoin="round";ctx.lineCap="round";ctx.beginPath();
+  samples.forEach((v,i)=>{const x=i/(samples.length-1)*w,y=(1-v)*h/2;if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);});ctx.stroke();
+}
+
 // Draw a live preview of the waveform after repeat, smoothing and normalization options.
 function renderWavePreview(ch, data) {
   const canvas = document.getElementById("previewCanvas" + ch);
   if (!canvas) return;
-  const ctx = canvas.getContext("2d");
   const cycles = ch === "L" ? cyclesL : cyclesR;
   const smoothing = ch === "L" ? smoothL : smoothR;
   const normalize = ch === "L" ? normalizeL : normalizeR;
   const processed = processCustomWave(data, cycles, smoothing, normalize);
-  const w = canvas.width, h = canvas.height;
-  ctx.clearRect(0, 0, w, h);
-  ctx.fillStyle = "#f8fbff"; ctx.fillRect(0, 0, w, h);
-  ctx.strokeStyle = "#e3eaf1"; ctx.lineWidth = 1;
-  for (let x = 0; x <= w; x += 32) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); }
-  for (let y = 0; y <= h; y += 25) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); }
-  ctx.strokeStyle = "#8a8a8a"; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(0, h/2); ctx.lineTo(w, h/2); ctx.stroke();
-  ctx.strokeStyle = "#e49a27"; ctx.lineWidth = 3; ctx.lineJoin = "round"; ctx.lineCap = "round"; ctx.beginPath();
-  processed.forEach((v, i) => { const x = i/(processed.length-1)*w, y = (1-v)*h/2; if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y); }); ctx.stroke();
+  drawWaveOnCanvas(canvas, processed, "#e49a27");
 }
 
 // Draw editor: fill missing samples by interpolation, so fast strokes do not leave gaps.
@@ -233,6 +266,7 @@ function setupCustomWaveDrawing(ch, data) {
     ctx.strokeStyle = "#1479d2"; ctx.lineWidth = 3; ctx.lineJoin = "round"; ctx.lineCap = "round"; ctx.beginPath();
     data.forEach((v, i) => { const x = i/(data.length-1)*w, y = (1-v)*h/2; if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y); }); ctx.stroke();
     renderWavePreview(ch, data);
+    renderSelectedWavePreview(ch);
   }
   function coords(e) {
     const rect = canvas.getBoundingClientRect();
@@ -273,17 +307,20 @@ function setupWaveOptions(ch) {
     if (ch === "L") cyclesL = Number(cycle.value); else cyclesR = Number(cycle.value);
     cycleDisplay.textContent = cycle.value + (Number(cycle.value) === 1 ? " cycle" : " cycles");
     renderWavePreview(ch, ch === "L" ? customWaveL : customWaveR);
+    renderSelectedWavePreview(ch);
     updateWaveform();
   });
   smooth.addEventListener("input", () => {
     if (ch === "L") smoothL = Number(smooth.value); else smoothR = Number(smooth.value);
     smoothDisplay.textContent = smooth.value + " %" + (Number(smooth.value) === 0 ? " (off)" : "");
     renderWavePreview(ch, ch === "L" ? customWaveL : customWaveR);
+    renderSelectedWavePreview(ch);
     updateWaveform();
   });
   norm.addEventListener("change", () => {
     if (ch === "L") normalizeL = norm.checked; else normalizeR = norm.checked;
     renderWavePreview(ch, ch === "L" ? customWaveL : customWaveR);
+    renderSelectedWavePreview(ch);
     updateWaveform();
   });
 }
